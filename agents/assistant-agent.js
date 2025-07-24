@@ -1,5 +1,5 @@
 // Load dependencies and configuration
-require('dotenv').config();  // Load env vars (if any)
+require('dotenv').config();  // Load env vars 
 const express = require('express');
 const cors = require('cors');
 const { v4: uuidv4 } = require('uuid');
