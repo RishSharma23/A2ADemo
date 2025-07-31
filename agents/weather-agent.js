@@ -1,9 +1,14 @@
 require('dotenv').config();
 const express = require('express');
 const cors = require('cors');
-const fetch = require('node-fetch');
 const { v4: uuidv4 } = require('uuid');
-const { A2AExpressApp, DefaultRequestHandler, InMemoryTaskStore } = require('@a2a-js/sdk');
+
+// Use server entrypoint for server classes
+const {
+  A2AExpressApp,
+  DefaultRequestHandler,
+  InMemoryTaskStore
+} = require('@a2a-js/sdk/server');
 
 // 1. Define the Weather Agent Card
 const weatherAgentCard = {

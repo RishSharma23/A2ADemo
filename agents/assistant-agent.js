@@ -1,9 +1,18 @@
 // Load dependencies and configuration
-require('dotenv').config();  // Load env vars 
+require('dotenv').config();  // Load .env
 const express = require('express');
 const cors = require('cors');
 const { v4: uuidv4 } = require('uuid');
-const { A2AExpressApp, DefaultRequestHandler, InMemoryTaskStore, A2AClient } = require('@a2a-js/sdk');
+
+// IMPORT SERVER CLASSES from @a2a-js/sdk/server
+const {
+  A2AExpressApp,
+  DefaultRequestHandler,
+  InMemoryTaskStore
+} = require('@a2a-js/sdk/server');
+
+// IMPORT the Client separately from client package
+const { A2AClient } = require('@a2a-js/sdk/client');
 
 // 1. Define the Assistant Agent's Card (public metadata)
 const assistantAgentCard = {

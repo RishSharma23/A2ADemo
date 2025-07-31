@@ -2,7 +2,8 @@ require('dotenv').config();
 const express = require('express');
 const cors = require('cors');
 const { v4: uuidv4 } = require('uuid');
-const { A2AExpressApp, DefaultRequestHandler, InMemoryTaskStore } = require('@a2a-js/sdk');
+const { A2AExpressApp, DefaultRequestHandler, InMemoryTaskStore } =
+  require('@a2a-js/sdk/server');
 
 // 1. Define the Calculator Agent Card
 const calcAgentCard = {
