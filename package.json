@@ -10,7 +10,7 @@
   "license": "ISC",
   "description": "",
   "dependencies": {
-    "@a2a-js/sdk": "^0.2.4",
+    "@a2a-js/sdk": "^0.2.5",
     "cors": "^2.8.5",
     "dotenv": "^17.2.1",
     "express": "^5.1.0",

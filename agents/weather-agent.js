@@ -110,7 +110,7 @@ const taskStore = new InMemoryTaskStore();
 const requestHandler = new DefaultRequestHandler(weatherAgentCard, taskStore, executor);
 const app = express();
 app.use(cors());
-app.use(express.json());
+//app.use(express.json());
 new A2AExpressApp(requestHandler).setupRoutes(app, '');
 
 const PORT = 3002;

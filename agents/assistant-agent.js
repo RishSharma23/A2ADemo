@@ -18,7 +18,7 @@ const { A2AClient } = require('@a2a-js/sdk/client');
 const assistantAgentCard = {
   name: "Assistant Orchestrator Agent",
   description: "Orchestrates tasks by delegating to specialized agents (calculator, weather).",
-  url: "http://localhost:3000",  // base URL where this agent is hosted
+  url: "http://localhost:3000",
   version: "1.0.0",
   capabilities: { streaming: true, pushNotifications: false, stateTransitionHistory: true },
   defaultInputModes: ["text/plain"],
@@ -37,14 +37,13 @@ const assistantAgentCard = {
 
 // 2. Implement the Assistant Agent's execution logic
 class AssistantExecutor {
-  // Handle incoming task requests
   async execute(requestContext, eventBus) {
-    const userMessage = requestContext.userMessage;  // user's message object
+    const userMessage = requestContext.userMessage;
     const queryText = (userMessage.parts[0]?.text || "").toLowerCase();
     const taskId = requestContext.task?.id || uuidv4();
     const contextId = userMessage.contextId || uuidv4();
 
-    // Immediately respond that we're working (streaming feedback)
+    // Streaming start
     eventBus.publish({
       kind: 'status-update',
       taskId, contextId,
@@ -57,46 +56,46 @@ class AssistantExecutor {
     try {
       let resultText;
       if (queryText.match(/weather|forecast/)) {
-        // Route to Weather Agent
+        // Delegate to Weather Agent
         eventBus.publish({
           kind: 'status-update', taskId, contextId,
-          status: { state: "working",
+          status: {
+            state: "working",
             message: { role: "agent", parts: [{ text: "➡️ Delegating to Weather Agent..." }] }
           }
         });
-        // Use A2AClient to call the Weather Agent's A2A server
         const weatherClient = new A2AClient("http://localhost:3002");
         const res = await weatherClient.sendMessage({
-          message: { 
+          message: {
             messageId: uuidv4(), role: "user", kind: "message",
-            parts: [{ kind: "text", text: userMessage.parts[0].text }] 
+            parts: [{ kind: "text", text: userMessage.parts[0].text }]
           },
           configuration: { blocking: true, acceptedOutputModes: ["text/plain"] }
         });
         resultText = res.result?.message?.parts?.[0]?.text || "(No response from weather agent)";
       } else if (queryText.match(/calc|calculate|solve|[0-9]/)) {
-        // Route to Calculator Agent
+        // Delegate to Calculator Agent
         eventBus.publish({
           kind: 'status-update', taskId, contextId,
-          status: { state: "working",
+          status: {
+            state: "working",
             message: { role: "agent", parts: [{ text: "➡️ Delegating to Calculator Agent..." }] }
           }
         });
         const calcClient = new A2AClient("http://localhost:3001");
         const res = await calcClient.sendMessage({
-          message: { 
+          message: {
             messageId: uuidv4(), role: "user", kind: "message",
-            parts: [{ kind: "text", text: userMessage.parts[0].text }] 
+            parts: [{ kind: "text", text: userMessage.parts[0].text }]
           },
           configuration: { blocking: true, acceptedOutputModes: ["text/plain"] }
         });
         resultText = res.result?.message?.parts?.[0]?.text || "(No response from calculator)";
       } else {
-        // If query not recognized for delegation
         resultText = "I can assist with math or weather questions. Please try asking for a calculation or a weather forecast.";
       }
 
-      // Send final completion message with the result
+      // Final completion
       eventBus.publish({
         kind: 'status-update',
         taskId, contextId,
@@ -107,20 +106,18 @@ class AssistantExecutor {
       });
     } catch (err) {
       console.error("Assistant error:", err);
-      // Notify failure
       eventBus.publish({
         kind: 'status-update', taskId, contextId,
-        status: { state: "failed",
+        status: {
+          state: "failed",
           message: { role: "agent", parts: [{ text: "⚠️ Failed to process request: " + err }] }
         }
       });
     }
   }
 
-  // Handle cancellation of a task (optional for long tasks)
   async cancelTask(taskId, eventBus) {
     console.log(`Assistant: cancel request for task ${taskId}`);
-    // (In a simple demo, we don't maintain long-running state to cancel.)
   }
 }
 
@@ -128,15 +125,19 @@ class AssistantExecutor {
 const executor = new AssistantExecutor();
 const taskStore = new InMemoryTaskStore();
 const requestHandler = new DefaultRequestHandler(assistantAgentCard, taskStore, executor);
-const app = express();
-app.use(cors());             // enable CORS for browser requests:contentReference[oaicite:7]{index=7}
-app.use(express.json());     // parse JSON request bodies
-// Serve frontend UI from this server (see frontend setup later)
-app.use('/', express.static(__dirname + '/../frontend')); 
-// Attach A2A protocol routes to Express
-new A2AExpressApp(requestHandler).setupRoutes(app, ''); 
 
-// Start the Assistant agent server
+const app = express();
+app.use(cors());             // enable CORS for browser requests
+// Note: removed express.json() so the SDK can handle streaming bodies
+// app.use(express.json());  
+
+// Serve frontend UI
+app.use('/', express.static(__dirname + '/../frontend'));
+
+// Attach A2A protocol routes to Express
+new A2AExpressApp(requestHandler).setupRoutes(app, '');
+
+// Start the Assistant Agent server
 const PORT = 3000;
 app.listen(PORT, () => {
   console.log(`Assistant Agent running at http://localhost:${PORT}`);
