@@ -1,20 +1,20 @@
 // Load dependencies and configuration
-require('dotenv').config();  // Load .env
+require('dotenv').config();
 const express = require('express');
 const cors = require('cors');
 const { v4: uuidv4 } = require('uuid');
 
-// IMPORT SERVER CLASSES from @a2a-js/sdk/server
+// SDK server classes
 const {
   A2AExpressApp,
   DefaultRequestHandler,
   InMemoryTaskStore
 } = require('@a2a-js/sdk/server');
 
-// IMPORT the Client separately from client package
+// SDK client (for delegation)
 const { A2AClient } = require('@a2a-js/sdk/client');
 
-// 1. Define the Assistant Agent's Card (public metadata)
+// Assistant Agent Card
 const assistantAgentCard = {
   name: "Assistant Orchestrator Agent",
   description: "Orchestrates tasks by delegating to specialized agents (calculator, weather).",
@@ -23,30 +23,26 @@ const assistantAgentCard = {
   capabilities: { streaming: true, pushNotifications: false, stateTransitionHistory: true },
   defaultInputModes: ["text/plain"],
   defaultOutputModes: ["text/plain"],
-  skills: [
-    {
-      id: "delegate_task",
-      name: "Task Delegation",
-      description: "Understands user requests and routes them to other agents (math or weather).",
-      examples: ["What’s 2+2?", "Is it sunny in Paris tomorrow?"],
-      inputModes: ["text/plain"],
-      outputModes: ["text/plain"]
-    }
-  ]
+  skills: [{
+    id: "delegate_task",
+    name: "Task Delegation",
+    description: "Understands user requests and routes them to other agents (math or weather).",
+    examples: ["What’s 2+2?", "Is it sunny in Paris tomorrow?"],
+    inputModes: ["text/plain"],
+    outputModes: ["text/plain"]
+  }]
 };
 
-// 2. Implement the Assistant Agent's execution logic
 class AssistantExecutor {
   async execute(requestContext, eventBus) {
     const userMessage = requestContext.userMessage;
-    const queryText = (userMessage.parts[0]?.text || "").toLowerCase();
-    const taskId = requestContext.task?.id || uuidv4();
-    const contextId = userMessage.contextId || uuidv4();
+    const queryText   = (userMessage.parts[0]?.text || "").toLowerCase();
+    const taskId      = requestContext.task?.id || uuidv4();
+    const contextId   = userMessage.contextId   || uuidv4();
 
-    // Streaming start
+    // 1) initial “working”
     eventBus.publish({
-      kind: 'status-update',
-      taskId, contextId,
+      kind: 'status-update', taskId, contextId,
       status: {
         state: "working",
         message: { role: "agent", parts: [{ text: "🤖 Assistant: received your request, analyzing..." }] }
@@ -55,8 +51,9 @@ class AssistantExecutor {
 
     try {
       let resultText;
+
       if (queryText.match(/weather|forecast/)) {
-        // Delegate to Weather Agent
+        // 2) delegating…
         eventBus.publish({
           kind: 'status-update', taskId, contextId,
           status: {
@@ -73,8 +70,8 @@ class AssistantExecutor {
           configuration: { blocking: true, acceptedOutputModes: ["text/plain"] }
         });
         resultText = res.result?.message?.parts?.[0]?.text || "(No response from weather agent)";
+
       } else if (queryText.match(/calc|calculate|solve|[0-9]/)) {
-        // Delegate to Calculator Agent
         eventBus.publish({
           kind: 'status-update', taskId, contextId,
           status: {
@@ -91,19 +88,23 @@ class AssistantExecutor {
           configuration: { blocking: true, acceptedOutputModes: ["text/plain"] }
         });
         resultText = res.result?.message?.parts?.[0]?.text || "(No response from calculator)";
+
       } else {
         resultText = "I can assist with math or weather questions. Please try asking for a calculation or a weather forecast.";
       }
 
-      // Final completion
+      // 3) final “completed”
       eventBus.publish({
-        kind: 'status-update',
-        taskId, contextId,
+        kind: 'status-update', taskId, contextId,
         status: {
           state: "completed",
           message: { role: "agent", parts: [{ text: resultText }] }
         }
       });
+
+      // 4) tell the SDK we’re done so the SSE stream closes
+      eventBus.finished();  
+      
     } catch (err) {
       console.error("Assistant error:", err);
       eventBus.publish({
@@ -113,6 +114,7 @@ class AssistantExecutor {
           message: { role: "agent", parts: [{ text: "⚠️ Failed to process request: " + err }] }
         }
       });
+      eventBus.finished();
     }
   }
 
@@ -121,25 +123,19 @@ class AssistantExecutor {
   }
 }
 
-// 3. Set up the Express server with A2A routes
-const executor = new AssistantExecutor();
-const taskStore = new InMemoryTaskStore();
+// 5) wire up Express without express.json()
+const executor       = new AssistantExecutor();
+const taskStore      = new InMemoryTaskStore();
 const requestHandler = new DefaultRequestHandler(assistantAgentCard, taskStore, executor);
+const app            = express();
 
-const app = express();
-app.use(cors());             // enable CORS for browser requests
-// Note: removed express.json() so the SDK can handle streaming bodies
-// app.use(express.json());  
+app.use(cors());                          // allow browser calls
+// app.use(express.json());               // ← removed!
 
-// Serve frontend UI
 app.use('/', express.static(__dirname + '/../frontend'));
-
-// Attach A2A protocol routes to Express
 new A2AExpressApp(requestHandler).setupRoutes(app, '');
 
-// Start the Assistant Agent server
-const PORT = 3000;
-app.listen(PORT, () => {
-  console.log(`Assistant Agent running at http://localhost:${PORT}`);
-  console.log(`Agent Card available at http://localhost:${PORT}/.well-known/agent.json`);
+app.listen(3000, () => {
+  console.log(`Assistant Agent running at http://localhost:3000`);
+  console.log(`Agent Card at http://localhost:3000/.well-known/agent.json`);
 });

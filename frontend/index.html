@@ -2,6 +2,7 @@
 <html lang="en" ng-app="A2ADemoApp">
 <head>
   <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>A2A Demo Interface</title>
 
   <!-- 1) AngularJS -->
@@ -62,14 +63,16 @@
     <div ng-repeat="msg in chatLog">
       <span class="msg-{{msg.role}}">{{msg.role}}:</span> {{msg.text}}
     </div>
-    <div ng-repeat="file in artifacts">
-      <a class="artifact-link"
-         ng-href="{{file.dataURL}}"
-         ng-download="{{file.filename}}"
-         ng-show="file.dataURL">
-        📎 Download "{{file.filename}}"
-      </a>
-    </div>
+
+<div ng-repeat="file in artifacts">
+  <a class="artifact-link"
+     ng-if="file.dataURL"
+     href="{{file.dataURL}}"
+     download="{{file.filename}}">
+    📎 Download {{file.filename}}
+  </a>
+</div>
+
   </div>
 </body>
 </html>

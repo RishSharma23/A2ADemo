@@ -2,8 +2,11 @@ require('dotenv').config();
 const express = require('express');
 const cors = require('cors');
 const { v4: uuidv4 } = require('uuid');
-const { A2AExpressApp, DefaultRequestHandler, InMemoryTaskStore } =
-  require('@a2a-js/sdk/server');
+const {
+  A2AExpressApp,
+  DefaultRequestHandler,
+  InMemoryTaskStore
+} = require('@a2a-js/sdk/server');
 
 // 1. Define the Calculator Agent Card
 const calcAgentCard = {
@@ -14,27 +17,25 @@ const calcAgentCard = {
   capabilities: { streaming: true, pushNotifications: false, stateTransitionHistory: true },
   defaultInputModes: ["text/plain"],
   defaultOutputModes: ["text/plain"],
-  skills: [
-    {
-      id: "calculate_math",
-      name: "Calculator",
-      description: "Calculates arithmetic expressions and solves math queries.",
-      examples: ["Calculate 5+7", "What is 12 divided by 3?", "Multiplication table of 4"],
-      inputModes: ["text/plain"],
-      outputModes: ["text/plain"]
-    }
-  ]
+  skills: [{
+    id: "calculate_math",
+    name: "Calculator",
+    description: "Calculates arithmetic expressions and solves math queries.",
+    examples: ["Calculate 5+7", "What is 12 divided by 3?", "Multiplication table of 4"],
+    inputModes: ["text/plain"],
+    outputModes: ["text/plain"]
+  }]
 };
 
-// 2. Implement the Calculator Agent logic
+// 2. Implement the Calculator Executor
 class CalculatorExecutor {
   async execute(requestContext, eventBus) {
     const userMessage = requestContext.userMessage;
-    const text = userMessage.parts[0]?.text || "";
-    const taskId = requestContext.task?.id || uuidv4();
-    const contextId = userMessage.contextId || uuidv4();
+    const text        = userMessage.parts[0]?.text || "";
+    const taskId      = requestContext.task?.id || uuidv4();
+    const contextId   = userMessage.contextId   || uuidv4();
 
-    // Immediately stream a "working" status update
+    // 2a) working update
     eventBus.publish({
       kind: 'status-update', taskId, contextId,
       status: {
@@ -45,35 +46,30 @@ class CalculatorExecutor {
 
     let result;
     try {
-      // Simple parser for basic arithmetic expressions (e.g., "5+7", "12 divided by 3")
-      const cleanExpr = text.replace(/[^0-9+\-*/.]/g, " ").replace(/divided by/gi, "/");
-      if (cleanExpr.trim() === "") throw new Error("No math expression found.");
-      // Evaluate expression safely:
+      const cleanExpr = text
+        .replace(/[^0-9+\-*/.]/g, " ")
+        .replace(/divided by/gi, "/");
+      if (!cleanExpr.trim()) throw new Error("No math expression found.");
       // eslint-disable-next-line no-eval
       result = eval(cleanExpr);
     } catch (err) {
       result = `Error: ${err.message}`;
     }
 
-    // Prepare response text
     let responseText = `Result: ${result}`;
-    // If the user asked for a "table" (e.g., multiplication table), produce an artifact
     if (text.toLowerCase().includes("table")) {
-      const number = parseInt(text.match(/\d+/)?.[0] || NaN);
-      if (!isNaN(number)) {
-        // Create a multiplication table artifact as a text file content
-        let tableContent = `Multiplication Table of ${number}:\n`;
+      const num = parseInt(text.match(/\d+/)?.[0] || NaN);
+      if (!isNaN(num)) {
+        let table = `Multiplication Table of ${num}:\n`;
         for (let i = 1; i <= 10; i++) {
-          tableContent += `${number} x ${i} = ${number * i}\n`;
+          table += `${num} x ${i} = ${num * i}\n`;
         }
-        // Publish artifact update event with the table content:contentReference[oaicite:17]{index=17}
         eventBus.publish({
-          kind: 'artifact-update',
-          taskId, contextId,
+          kind: 'artifact-update', taskId, contextId,
           artifact: {
-            artifactId: `table-${number}`,
-            name: `table_of_${number}.txt`,
-            parts: [{ text: tableContent }]
+            artifactId: `table-${num}`,
+            name: `table_of_${num}.txt`,
+            parts: [{ text: table }]
           },
           append: false,
           lastChunk: true
@@ -82,10 +78,9 @@ class CalculatorExecutor {
       }
     }
 
-    // Publish the final result as a completed status
+    // 2b) completed update
     eventBus.publish({
-      kind: 'status-update',
-      taskId, contextId,
+      kind: 'status-update', taskId, contextId,
       status: {
         state: "completed",
         message: { role: "agent", parts: [{ text: responseText }] }
@@ -95,17 +90,21 @@ class CalculatorExecutor {
 
   async cancelTask(taskId, eventBus) {
     console.log(`Calculator: cancel request for task ${taskId}`);
-    // (No long-running operations to actually cancel in this demo.)
   }
 }
 
-// 3. Set up the Calculator agent server on port 3001
-const executor = new CalculatorExecutor();
-const taskStore = new InMemoryTaskStore();
+// 3. Wire up Express
+const executor       = new CalculatorExecutor();
+const taskStore      = new InMemoryTaskStore();
 const requestHandler = new DefaultRequestHandler(calcAgentCard, taskStore, executor);
-const app = express();
+const app            = express();
+
 app.use(cors());
-//app.use(express.json());
+
+// Only parse JSON for the blocking RPC (/message)
+app.post('/message', express.json());
+
+// Mount all A2A routes (including /message/stream)
 new A2AExpressApp(requestHandler).setupRoutes(app, '');
 
 const PORT = 3001;
