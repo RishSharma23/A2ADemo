@@ -1,78 +1,92 @@
 <!DOCTYPE html>
-<html lang="en" ng-app="A2ADemoApp">
+<html lang="en" ng-app="a2aDemoApp">
 <head>
   <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
   <title>A2A Demo Interface</title>
 
-  <!-- 1) AngularJS -->
+  <!-- AngularJS + sanitize -->
   <script src="https://ajax.googleapis.com/ajax/libs/angularjs/1.8.2/angular.min.js"></script>
+  <script src="https://ajax.googleapis.com/ajax/libs/angularjs/1.8.2/angular-sanitize.min.js"></script>
 
-  <!-- 2) Load the ESM client and attach to window -->
+  <!-- A2AClient as ES module -->
   <script type="module">
     import { A2AClient } from './a2a-client.js';
-    // expose for your non-module app.js
     window.A2AClient = A2AClient;
   </script>
 
-  <!-- 3) Your application script (unchanged) -->
+  <!-- Inline UUID generator (no external CDN) -->
+  <script>
+    // RFC4122-compliant v4 UUID generator
+    window.uuidv4 = function() {
+      return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, c => {
+        const r = Math.random() * 16 | 0;
+        const v = c === 'x' ? r : (r & 0x3 | 0x8);
+        return v.toString(16);
+      });
+    };
+  </script>
+
+  <!-- Refactored chat logic -->
   <script src="app.js"></script>
 
   <style>
-    body { font-family: Arial, sans-serif; margin: 20px; max-width: 600px; }
-    select, input, button { font-size: 1em; }
-    #messages {
-      border: 1px solid #ccc;
-      padding: 10px;
-      height: 200px;
-      overflow-y: auto;
-      white-space: pre-wrap;
-    }
-    .msg-user { font-weight: bold; }
-    .msg-agent { margin-left: 20px; }
-    .artifact-link {
-      display: block;
-      margin-left: 20px;
-      color: blue;
-      text-decoration: underline;
-      cursor: pointer;
-    }
+    body { font-family: Arial, sans-serif; margin:20px; max-width:600px; }
+    .chat-window { border: 1px solid #ccc; padding:10px; height:300px; overflow-y:auto; }
+    .message { margin-bottom:8px; }
+    .message.user   { text-align: right; }
+    .message.agent  { text-align: left; }
+    .loading { font-style: italic; color: #666; }
+    pre { background:#f9f9f9; padding:8px; overflow-x:auto; }
+    img { max-width:100%; height:auto; display:block; margin-top:8px; }
+    .artifact { border-top:1px solid #eee; margin-top:12px; padding-top:8px; }
   </style>
 </head>
+
 <body ng-controller="ChatController">
   <h1>A2A Demo UI</h1>
-  <p>Select an agent to chat with, then enter a message:</p>
 
-  <div>
-    <label for="agentSelect"><strong>Agent:</strong></label>
-    <select id="agentSelect"
-            ng-model="selectedAgent"
-            ng-options="agent.name for agent in agents">
-    </select>
-  </div>
-
-  <div style="margin: 10px 0;">
-    <input type="text"
-           ng-model="userQuery"
-           placeholder="Type your message..."
-           style="width:80%;" />
-    <button ng-click="sendMessage()">Send</button>
-  </div>
-
-  <div id="messages">
-    <div ng-repeat="msg in chatLog">
-      <span class="msg-{{msg.role}}">{{msg.role}}:</span> {{msg.text}}
+  <div class="chat-window">
+    <!-- Finalized messages -->
+    <div ng-repeat="msg in messages" class="message {{msg.sender}}">
+      <strong ng-if="msg.sender==='user'">You:</strong>
+      <strong ng-if="msg.sender==='assistant'">Assistant:</strong>
+      <span ng-if="msg.sender==='user'">{{msg.content}}</span>
+      <span ng-if="msg.sender==='assistant'" ng-bind-html="msg.content"></span>
     </div>
 
-<div ng-repeat="file in artifacts">
-  <a class="artifact-link"
-     ng-if="file.dataURL"
-     href="{{file.dataURL}}"
-     download="{{file.filename}}">
-    📎 Download {{file.filename}}
-  </a>
-</div>
+    <!-- Streaming in-progress reply -->
+    <div class="message agent" ng-if="streamingReply">
+      <strong>Assistant:</strong>
+      <span ng-bind-html="trustMarkdown(streamingReply)"></span>
+    </div>
 
+    <!-- Artifact (JSON/text/binary) -->
+    <div class="artifact" ng-if="artifact">
+      <h4>Artifact:</h4>
+      <div ng-switch="artifact.type">
+        <pre ng-switch-when="json">{{artifact.raw}}</pre>
+        <pre ng-switch-when="text">{{artifact.raw}}</pre>
+        <div ng-switch-when="binary">
+          <a ng-href="{{createObjectURL(artifact.blob)}}"
+             download="{{artifact.name}}">
+            📎 Download {{artifact.name}}
+          </a>
+          <img ng-if="artifact.blob.type.startsWith('image/')"
+               ng-src="{{createObjectURL(artifact.blob)}}"
+               alt="Image Artifact"/>
+        </div>
+      </div>
+    </div>
+
+    <!-- “typing…” indicator -->
+    <div class="loading" ng-if="loading">Assistant is typing…</div>
   </div>
+
+  <form ng-submit="sendMessage()" style="margin-top:12px;">
+    <input type="text" ng-model="userInput"
+           placeholder="Type a message…" style="width:80%;" required />
+    <button type="submit">Send</button>
+  </form>
 </body>
 </html>

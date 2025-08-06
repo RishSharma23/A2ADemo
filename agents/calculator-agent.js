@@ -1,114 +1,143 @@
-require('dotenv').config();
-const express = require('express');
-const cors = require('cors');
-const { v4: uuidv4 } = require('uuid');
-const {
-  A2AExpressApp,
+// calculator-agent.js
+import express from 'express';
+import cors from 'cors';
+import { v4 as uuidv4 } from 'uuid';
+import {
   DefaultRequestHandler,
+  A2AExpressApp,
   InMemoryTaskStore
-} = require('@a2a-js/sdk/server');
+} from '@a2a-js/sdk/server';
 
-// 1. Define the Calculator Agent Card
-const calcAgentCard = {
+const calculatorAgentCard = {
   name: "Calculator Agent",
-  description: "Solves math problems and arithmetic calculations.",
-  url: "http://localhost:3001",
-  version: "1.0.0",
-  capabilities: { streaming: true, pushNotifications: false, stateTransitionHistory: true },
+  description: "Performs arithmetic calculations from text queries.",
+  url: "http://localhost:41233/",
+  version: "1.0.1",
+  capabilities: { streaming: true, stateTransitionHistory: true },
   defaultInputModes: ["text/plain"],
   defaultOutputModes: ["text/plain"],
-  skills: [{
-    id: "calculate_math",
-    name: "Calculator",
-    description: "Calculates arithmetic expressions and solves math queries.",
-    examples: ["Calculate 5+7", "What is 12 divided by 3?", "Multiplication table of 4"],
-    inputModes: ["text/plain"],
-    outputModes: ["text/plain"]
-  }]
+  skills: [
+    {
+      id: "calculator",
+      name: "Calculator",
+      description: "Solves math expressions, including exponentiation with ^.",
+      examples: ["What is 25 * 4 + 16?", "calculate 2^5", "3+5"],
+      inputModes: ["text/plain"],
+      outputModes: ["text/plain"]
+    }
+  ]
 };
 
-// 2. Implement the Calculator Executor
-class CalculatorExecutor {
-  async execute(requestContext, eventBus) {
-    const userMessage = requestContext.userMessage;
-    const text        = userMessage.parts[0]?.text || "";
-    const taskId      = requestContext.task?.id || uuidv4();
-    const contextId   = userMessage.contextId   || uuidv4();
-
-    // 2a) working update
-    eventBus.publish({
-      kind: 'status-update', taskId, contextId,
-      status: {
-        state: "working",
-        message: { role: "agent", parts: [{ text: "🧮 Calculating..." }] }
-      }
-    });
-
-    let result;
-    try {
-      const cleanExpr = text
-        .replace(/[^0-9+\-*/.]/g, " ")
-        .replace(/divided by/gi, "/");
-      if (!cleanExpr.trim()) throw new Error("No math expression found.");
-      // eslint-disable-next-line no-eval
-      result = eval(cleanExpr);
-    } catch (err) {
-      result = `Error: ${err.message}`;
-    }
-
-    let responseText = `Result: ${result}`;
-    if (text.toLowerCase().includes("table")) {
-      const num = parseInt(text.match(/\d+/)?.[0] || NaN);
-      if (!isNaN(num)) {
-        let table = `Multiplication Table of ${num}:\n`;
-        for (let i = 1; i <= 10; i++) {
-          table += `${num} x ${i} = ${num * i}\n`;
-        }
-        eventBus.publish({
-          kind: 'artifact-update', taskId, contextId,
-          artifact: {
-            artifactId: `table-${num}`,
-            name: `table_of_${num}.txt`,
-            parts: [{ text: table }]
-          },
-          append: false,
-          lastChunk: true
-        });
-        responseText += " (see attached file for full table)";
-      }
-    }
-
-    // 2b) completed update
-    eventBus.publish({
-      kind: 'status-update', taskId, contextId,
-      status: {
-        state: "completed",
-        message: { role: "agent", parts: [{ text: responseText }] }
-      }
-    });
+class CalculatorAgentExecutor {
+  constructor() {
+    this.cancelledTasks = new Set();
+  }
+  cancelTask(taskId) {
+    this.cancelledTasks.add(taskId);
+    return Promise.resolve();
   }
 
-  async cancelTask(taskId, eventBus) {
-    console.log(`Calculator: cancel request for task ${taskId}`);
+  async execute(context, eventBus) {
+    const { userMessage, taskId, contextId, task } = context;
+    const isNew = !task;
+    const expr = (userMessage.parts[0]?.text || "").trim();
+
+    if (isNew) {
+      eventBus.publish({
+        kind: "task",
+        id: taskId,
+        contextId,
+        status: { state: "submitted", timestamp: new Date().toISOString() },
+        history: [userMessage],
+        metadata: userMessage.metadata,
+        artifacts: []
+      });
+    }
+
+    eventBus.publish({
+      kind: "status-update",
+      taskId, contextId,
+      status: {
+        state: "working",
+        message: {
+          kind: "message",
+          role: "agent",
+          messageId: uuidv4(),
+          taskId,
+          contextId,
+          parts: [{ kind: "text", text: "Crunching numbers..." }]
+        },
+        timestamp: new Date().toISOString()
+      },
+      final: false
+    });
+
+    // Evaluate safely: allow digits, + - * / . ^ % and spaces
+    let resultText;
+    try {
+      if (!/^[0-9+\-*/().^ %\s]+$/.test(expr))
+        throw new Error("Unsupported characters in expression");
+      // Replace ALL '^' with '**' for exponentiation
+      const jsExpr = expr.replace(/\^/g, "**");
+      const val = Function(`"use strict"; return (${jsExpr});`)();
+      resultText = `${expr} = ${val}`;
+    } catch (e) {
+      resultText = "Error: " + e.message;
+    }
+
+    if (this.cancelledTasks.has(taskId)) {
+      eventBus.publish({
+        kind: "status-update",
+        taskId, contextId,
+        status: {
+          state: "cancelled",
+          message: {
+            kind: "message",
+            role: "agent",
+            messageId: uuidv4(),
+            taskId,
+            contextId,
+            parts: [{ kind: "text", text: "(calculation cancelled)" }]
+          },
+          timestamp: new Date().toISOString()
+        },
+        final: true
+      });
+      eventBus.finished();
+      return;
+    }
+
+    eventBus.publish({
+      kind: "status-update",
+      taskId, contextId,
+      status: {
+        state: "completed",
+        message: {
+          kind: "message",
+          role: "agent",
+          messageId: uuidv4(),
+          taskId,
+          contextId,
+          parts: [{ kind: "text", text: resultText }]
+        },
+        timestamp: new Date().toISOString()
+      },
+      final: true
+    });
+    eventBus.finished();
   }
 }
 
-// 3. Wire up Express
-const executor       = new CalculatorExecutor();
-const taskStore      = new InMemoryTaskStore();
-const requestHandler = new DefaultRequestHandler(calcAgentCard, taskStore, executor);
-const app            = express();
-
+// Server bootstrap
+const exec = new CalculatorAgentExecutor();
+const handler = new DefaultRequestHandler(
+  calculatorAgentCard,
+  new InMemoryTaskStore(),
+  exec
+);
+const app = express();
 app.use(cors());
-
-// Only parse JSON for the blocking RPC (/message)
-app.post('/message', express.json());
-
-// Mount all A2A routes (including /message/stream)
-new A2AExpressApp(requestHandler).setupRoutes(app, '');
-
-const PORT = 3001;
-app.listen(PORT, () => {
-  console.log(`Calculator Agent running at http://localhost:${PORT}`);
-  console.log(`Agent Card at http://localhost:${PORT}/.well-known/agent.json`);
+new A2AExpressApp(handler).setupRoutes(app, "");
+app.listen(41233, () => {
+  console.log("Calculator Agent listening on http://localhost:41233/");
 });

@@ -1,69 +1,98 @@
-angular.module('A2ADemoApp', [])
+angular.module('a2aDemoApp', ['ngSanitize'])
 .controller('ChatController', ['$scope', '$sce', function($scope, $sce) {
-  const { A2AClient } = window;
+  // 1) Setup
+  const assistantClient = new A2AClient("http://localhost:41231");
+  $scope.messages       = [];
+  $scope.streamingReply = "";
+  $scope.artifact       = null;
+  $scope.loading        = false;
+  $scope.userInput      = "";
 
-  $scope.agents = [
-    { name: "Assistant Agent",  url: "http://localhost:3000" },
-    { name: "Calculator Agent", url: "http://localhost:3001" },
-    { name: "Weather Agent",    url: "http://localhost:3002" }
-  ];
-  $scope.selectedAgent = $scope.agents[0];
-  $scope.userQuery    = "";
-  $scope.chatLog      = [];
-  $scope.artifacts    = [];
-
-  $scope.sendMessage = function() {
-    const baseUrl = $scope.selectedAgent.url;
-    const text    = $scope.userQuery.trim();
+  // 2) Send + stream
+  $scope.sendMessage = async function() {
+    const text = $scope.userInput.trim();
     if (!text) return;
 
-    $scope.chatLog.push({ role: 'user', text });
-    $scope.artifacts = [];
-    $scope.userQuery = "";
+    // Push user
+    $scope.messages.push({ sender: 'user', content: text });
+    $scope.streamingReply = "";
+    $scope.artifact       = null;
+    $scope.loading        = true;
+    $scope.userInput      = "";
 
-    const client = new A2AClient(baseUrl);
-    const stream = client.sendMessageStream({
+    const params = {
       message: {
-        messageId: Date.now().toString(),
-        kind:      "message",
-        role:      "user",
-        parts:    [{ kind: "text", text }]
+        messageId: uuidv4(),
+        role: "user",
+        kind: "message",
+        parts: [{ kind: "text", text }]
       },
       configuration: {
-        acceptedOutputModes: ["text/plain"]
+        acceptedOutputModes: ["text/plain", "text/markdown", "application/json"]
       }
-    });
+    };
 
-    (async () => {
-      try {
-        for await (const event of stream) {
-          if (event.kind === 'status-update' && event.status?.message?.parts) {
-            const msg = event.status.message.parts[0].text;
-            $scope.$apply(() => {
-              $scope.chatLog.push({ role: 'agent', text: msg });
-            });
-            if (event.status.state === 'completed' || event.status.state === 'failed') {
-              break;
+    try {
+      const stream = assistantClient.sendMessageStream(params);
+      for await (const event of stream) {
+        if (event.kind === "status-update") {
+          const msg = event.status.message;
+          if (msg?.parts?.length) {
+            const chunk = msg.parts.map(p => p.text).join('');
+            if (!event.final) {
+              $scope.streamingReply += chunk;
+            } else {
+              const fullHtml = $sce.trustAsHtml(markdownToHtml($scope.streamingReply + chunk));
+              $scope.messages.push({ sender: 'assistant', content: fullHtml });
+              $scope.streamingReply = "";
             }
           }
-          else if (event.kind === 'artifact-update' && event.artifact?.parts) {
-            const filename = event.artifact.name || "artifact.txt";
-            const content  = event.artifact.parts[0].text;
-            const blob     = new Blob([content], { type: 'text/plain' });
-            const url      = URL.createObjectURL(blob);
-            // trust it
-            const trustedUrl = $sce.trustAsResourceUrl(url);
-            $scope.$apply(() => {
-              $scope.artifacts.push({ filename, dataURL: trustedUrl });
-            });
+        }
+        else if (event.kind === "artifact-update") {
+          const art = event.artifact;
+          const raw = art.parts.map(p => p.text).join('');
+          if (art.name?.endsWith('.json')) {
+            let dataObj = null;
+            try { dataObj = JSON.parse(raw); } catch {}
+            $scope.artifact = { type:'json', raw, data:dataObj };
+          }
+          else if (art.parts[0].base64) {
+            const blob = b64toBlob(art.parts[0].base64, art.mimeType||'application/octet-stream');
+            $scope.artifact = { type:'binary', blob, name:art.name };
+          }
+          else {
+            $scope.artifact = { type:'text', raw };
           }
         }
-      } catch (err) {
-        console.error("Stream error:", err);
-        $scope.$apply(() => {
-          $scope.chatLog.push({ role: 'agent', text: '⚠️ Stream error: ' + err.message });
-        });
+
+        $scope.$applyAsync();
+        if (event.final) break;
       }
-    })();
+    } catch(err) {
+      console.error("Streaming error:", err);
+      $scope.messages.push({ sender:'assistant', content: `⚠️ Error: ${err.message}` });
+    } finally {
+      $scope.loading = false;
+      $scope.$applyAsync();
+    }
   };
+
+  // 3) Markdown → HTML
+  function markdownToHtml(md) {
+    return md
+      .replace(/```([\s\S]*?)```/g, '<pre>$1</pre>')
+      .replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>')
+      .replace(/\*(.+?)\*/g, '<em>$1</em>')
+      .replace(/`([^`]+)`/g, '<code>$1</code>')
+      .replace(/\n/g, '<br/>');
+  }
+  $scope.trustMarkdown    = md => $sce.trustAsHtml(markdownToHtml(md));
+  $scope.createObjectURL  = blob => URL.createObjectURL(blob);
+
+  // 4) Base64 → Blob helper
+  function b64toBlob(b64, mime) {
+    const bin = atob(b64), len = bin.length, arr = new Uint8Array(len);
+    for (let i=0; i<len; i++) arr[i] = bin.charCodeAt(i);
+    return new Blob([arr], { type: mime });
+  }
 }]);
