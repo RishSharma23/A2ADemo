@@ -8,11 +8,14 @@ import {
   InMemoryTaskStore
 } from '@a2a-js/sdk/server';
 
+//
+// 1. Agent card
+//
 const calculatorAgentCard = {
   name: "Calculator Agent",
   description: "Performs arithmetic calculations from text queries.",
   url: "http://localhost:41233/",
-  version: "1.0.1",
+  version: "1.0.2",
   capabilities: { streaming: true, stateTransitionHistory: true },
   defaultInputModes: ["text/plain"],
   defaultOutputModes: ["text/plain"],
@@ -28,10 +31,14 @@ const calculatorAgentCard = {
   ]
 };
 
+//
+// 2. Executor
+//
 class CalculatorAgentExecutor {
   constructor() {
     this.cancelledTasks = new Set();
   }
+
   cancelTask(taskId) {
     this.cancelledTasks.add(taskId);
     return Promise.resolve();
@@ -40,8 +47,9 @@ class CalculatorAgentExecutor {
   async execute(context, eventBus) {
     const { userMessage, taskId, contextId, task } = context;
     const isNew = !task;
-    const expr = (userMessage.parts[0]?.text || "").trim();
+    const rawText = (userMessage.parts[0]?.text || "").trim();
 
+    // 2a. Initial task event
     if (isNew) {
       eventBus.publish({
         kind: "task",
@@ -54,6 +62,7 @@ class CalculatorAgentExecutor {
       });
     }
 
+    // 2b. Working status update
     eventBus.publish({
       kind: "status-update",
       taskId, contextId,
@@ -72,19 +81,39 @@ class CalculatorAgentExecutor {
       final: false
     });
 
-    // Evaluate safely: allow digits, + - * / . ^ % and spaces
+    // 2c. Extract only the math expression from the input
     let resultText;
     try {
-      if (!/^[0-9+\-*/().^ %\s]+$/.test(expr))
-        throw new Error("Unsupported characters in expression");
-      // Replace ALL '^' with '**' for exponentiation
+      // Keep digits, operators, parentheses, spaces, decimal points, percent, caret:
+      const exprMatch = rawText
+        .match(/[0-9+\-*/().^ %]+/g);
+      const expr = exprMatch
+        ? exprMatch.join('')
+        : "";
+      if (!expr) {
+        throw new Error("No valid expression found in input.");
+      }
+
+      // Validate allowed characters
+      if (!/^[0-9+\-*/().^ %\s]+$/.test(expr)) {
+        throw new Error("Unsupported characters in expression.");
+      }
+
+      // Convert '^' → '**' for JS exponentiation
       const jsExpr = expr.replace(/\^/g, "**");
+
+      // Evaluate in safe scope
       const val = Function(`"use strict"; return (${jsExpr});`)();
+      if (typeof val !== 'number' || Number.isNaN(val)) {
+        throw new Error("Expression did not evaluate to a number.");
+      }
+
       resultText = `${expr} = ${val}`;
     } catch (e) {
       resultText = "Error: " + e.message;
     }
 
+    // 2d. Cancellation check
     if (this.cancelledTasks.has(taskId)) {
       eventBus.publish({
         kind: "status-update",
@@ -107,6 +136,7 @@ class CalculatorAgentExecutor {
       return;
     }
 
+    // 2e. Final response
     eventBus.publish({
       kind: "status-update",
       taskId, contextId,
@@ -128,12 +158,14 @@ class CalculatorAgentExecutor {
   }
 }
 
-// Server bootstrap
-const exec = new CalculatorAgentExecutor();
-const handler = new DefaultRequestHandler(
+//
+// 3. Server bootstrap
+//
+const executor = new CalculatorAgentExecutor();
+const handler  = new DefaultRequestHandler(
   calculatorAgentCard,
   new InMemoryTaskStore(),
-  exec
+  executor
 );
 const app = express();
 app.use(cors());
