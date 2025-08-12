@@ -24,7 +24,7 @@ angular.module('a2aDemoApp', ['ngSanitize'])
       parts: [{ kind: "text", text }]
     };
 
-    // FIX: always continue with the ASSISTANT'S taskId/contextId (not the tool's)
+    // Continue HITL on the ASSISTANT'S taskId/contextId
     if ($scope.hitlPending) {
       message.taskId    = $scope.hitlPending.taskId;
       message.contextId = $scope.hitlPending.contextId;
@@ -42,11 +42,12 @@ angular.module('a2aDemoApp', ['ngSanitize'])
     try {
       const stream = assistantClient.sendMessageStream(params);
 
-      // Separate buffers: do NOT carry “working” text into the final bubble
-      let finalMsgHtml = "";
+      // Buffers for final assistant bubble
+      let finalMsgHtml   = "";
       let collectedCites = [];
       let lastIntentPath = null;
-      let sawInputReq = false;
+      let sawInputReq    = false;
+      let postedHitlBubble = false; // ensure we only add one HITL prompt bubble per stream turn
 
       for await (const event of stream) {
         if (event.kind === "status-update") {
@@ -54,17 +55,43 @@ angular.module('a2aDemoApp', ['ngSanitize'])
           const msg = st.message || {};
           const state = st.state;
 
-          // FIX: Only mark HITL using assistant's IDs — ignore any msg.taskId from tools
+          // Render HITL prompt as a normal assistant bubble (with full tool-provided text)
           if (state === "input-required") {
             sawInputReq = true;
-            $scope.hitlPending = { taskId: event.taskId, contextId: event.contextId }; // FIX
+            // Always continue with assistant IDs
+            $scope.hitlPending = { taskId: event.taskId, contextId: event.contextId };
+
+            if (!postedHitlBubble) {
+              const promptText = (msg.parts && msg.parts.length)
+                ? msg.parts.map(p => p.text || "").join("")
+                : "The agent requested more input. Please reply yes/no.";
+
+              const html = $sce.trustAsHtml(markdownToHtml(promptText));
+              $scope.messages.push({
+                sender: 'assistant',
+                html,
+                citations: Array.isArray(msg.citations) ? msg.citations : undefined,
+                intentPath: Array.isArray(msg.intentPath) ? msg.intentPath : undefined,
+                hitl: true
+              });
+
+              // Stop spinner; we're waiting for user input now
+              $scope.loading = false;
+              // Scroll to newest bubble
+              $timeout(() => {
+                const w = document.getElementById('chatWindow');
+                if (w) w.scrollTop = w.scrollHeight;
+              }, 0);
+
+              postedHitlBubble = true;
+            }
           }
 
-          // Collect citations/intentPath
+          // Collect citations/intentPath (used for final bubble when completed)
           if (Array.isArray(msg.citations)) collectedCites.push(...msg.citations);
           if (Array.isArray(msg.intentPath)) lastIntentPath = msg.intentPath;
 
-          // FIX: ignore non-final text (avoid duplicating “working” lines)
+          // Only accumulate final text; ignore working text to avoid duplicates
           if (state === "completed" && msg?.parts?.length) {
             finalMsgHtml += msg.parts.map(p => p.text || "").join('');
           }
@@ -105,9 +132,15 @@ angular.module('a2aDemoApp', ['ngSanitize'])
           intentPath: lastIntentPath || undefined,
           hitl: sawInputReq || undefined
         });
+
+        // Scroll to newest bubble
+        $timeout(() => {
+          const w = document.getElementById('chatWindow');
+          if (w) w.scrollTop = w.scrollHeight;
+        }, 0);
       }
 
-      // If no longer waiting for HITL, clear
+      // If no HITL currently waiting, clear continuation anchor
       if (!sawInputReq) $scope.hitlPending = null;
 
     } catch (err) {
