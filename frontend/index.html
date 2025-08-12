@@ -5,24 +5,23 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
   <title>A2A Demo Interface</title>
 
-  <!-- Inter font for modern cleanliness -->
+  <!-- Fonts -->
   <link rel="preconnect" href="https://fonts.gstatic.com"/>
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&display=swap" rel="stylesheet"/>
 
-  <!-- AngularJS + sanitize -->
+  <!-- AngularJS -->
   <script src="https://ajax.googleapis.com/ajax/libs/angularjs/1.8.2/angular.min.js"></script>
   <script src="https://ajax.googleapis.com/ajax/libs/angularjs/1.8.2/angular-sanitize.min.js"></script>
-
   <!-- Chart.js -->
   <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
 
-  <!-- A2AClient -->
+  <!-- A2AClient wrapper -->
   <script type="module">
     import { A2AClient } from './a2a-client.js';
     window.A2AClient = A2AClient;
   </script>
 
-  <!-- UUID v4 -->
+  <!-- UUID v4 (inline) -->
   <script>
     window.uuidv4 = () =>
       'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, c => {
@@ -31,176 +30,65 @@
       });
   </script>
 
-  <!-- App logic -->
+  <!-- App -->
   <script src="app.js"></script>
 
   <style>
-    :root {
-      --font-sans: 'Inter', sans-serif;
-      --brand-purple: #5C0082;
-      --bg-page: #FFFFFF;
-      --bg-chat: #F9F8FB;
-      --color-user: #EDE0F7;
-      --color-agent: #F4F4F6;
-      --text-primary: #1A1A1A;
-      --text-secondary: #555555;
-      --border-radius: 12px;
-      --shadow: 0 2px 8px rgba(0,0,0,0.1);
+    :root{
+      --brand-purple:#5C0082; --bg:#fff; --subtle:#F9F8FB; --user:#EDE0F7; --agent:#F4F4F6;
+      --text:#1A1A1A; --muted:#666; --radius:12px; --shadow:0 2px 8px rgba(0,0,0,.08);
+      --border:#E6E6EA; --link:#5C0082;
     }
+    *{box-sizing:border-box} body{font-family:'Inter',sans-serif;background:var(--bg);color:var(--text);display:flex;justify-content:center;padding:24px}
+    .chat-container{width:100%;max-width:720px}
+    h1{color:var(--brand-purple);text-align:center;margin:0 0 12px 0;font-weight:700}
 
-    * { box-sizing: border-box; margin:0; padding:0; }
-    body {
-      font-family: var(--font-sans);
-      background: var(--bg-page);
-      color: var(--text-primary);
-      display: flex;
-      justify-content: center;
-      padding: 2rem 1rem;
-    }
+    .chat-window{background:var(--subtle);border-radius:var(--radius);box-shadow:var(--shadow);height:460px;overflow-y:auto;padding:16px;margin-bottom:12px}
+    .message{display:flex;margin-bottom:8px}
+    .message.user{justify-content:flex-end}
+    .message.agent{justify-content:flex-start}
+    .bubble{max-width:78%;padding:12px 14px;border-radius:var(--radius);line-height:1.45;word-wrap:break-word;position:relative;border:1px solid var(--border)}
+    .message.user .bubble{background:var(--user);border-top-right-radius:0}
+    .message.agent .bubble{background:var(--agent);border-top-left-radius:0}
+    .bubble strong{display:block;color:var(--muted);font-weight:600;margin-bottom:4px}
 
-    .chat-container {
-      width: 100%;
-      max-width: 600px;
-    }
-    h1 {
-      font-weight: 600;
-      color: var(--brand-purple);
-      margin-bottom: 1rem;
-      text-align: center;
-    }
+    .meta-row{display:flex;align-items:center;gap:8px;margin-top:6px;font-size:12px;color:var(--muted)}
+    .intent{padding:4px 8px;border-radius:999px;background:#fff;border:1px solid var(--border)}
+    .hitl{padding:4px 8px;border-radius:999px;background:#fff;border:1px dashed var(--brand-purple);color:var(--brand-purple);font-weight:600}
+    .citations{margin-top:8px}
+    details.cites{background:#fff;border:1px solid var(--border);border-radius:10px;padding:8px}
+    details.cites > summary{cursor:pointer;user-select:none;font-weight:600;color:var(--brand-purple)}
+    .cite-item{padding:6px 4px;border-top:1px dotted #eaeaea}
+    .cite-item:first-child{border-top:none}
+    .cite-title a{color:var(--link);text-decoration:none}
+    .cite-meta{font-size:12px;color:var(--muted)}
+    .artifact{background:#FEF9FF;border-left:4px solid var(--brand-purple);padding:12px;border-radius:var(--radius);margin:12px 0;box-shadow:var(--shadow)}
+    .artifact h4{margin:0 0 6px;color:var(--brand-purple)}
+    .artifact a{color:var(--link);font-weight:600;text-decoration:none}
 
-    .chat-window {
-      background: var(--bg-chat);
-      border-radius: var(--border-radius);
-      box-shadow: var(--shadow);
-      height: 400px;
-      overflow-y: auto;
-      padding: 1rem;
-      margin-bottom: 1rem;
-      scroll-behavior: smooth;
-    }
+    form.input-group{display:flex;gap:8px;margin:8px 0 18px}
+    form input{flex:1;padding:12px;border:1px solid var(--border);border-radius:var(--radius)}
+    form button{background:var(--brand-purple);color:#fff;border:none;padding:0 18px;border-radius:var(--radius);cursor:pointer}
+    form button:hover{filter:brightness(.95)}
+    .hitl-toolbar{display:flex;align-items:center;gap:8px;margin:6px 0 10px}
+    .hitl-toolbar button{background:#fff;border:1px solid var(--brand-purple);color:var(--brand-purple);border-radius:999px;padding:4px 10px;cursor:pointer}
+    .loading{text-align:center;color:var(--muted);font-style:italic;margin-top:6px}
 
-    .message {
-      display: flex;
-      margin-bottom: 0.5rem;
-      clear: both;
-    }
-    .message.user { justify-content: flex-end; }
-    .message.agent { justify-content: flex-start; }
-
-    .bubble {
-      max-width: 75%;
-      padding: 0.75rem 1rem;
-      border-radius: var(--border-radius);
-      line-height: 1.4;
-      word-wrap: break-word;
-      position: relative;
-    }
-    .message.user .bubble {
-      background: var(--color-user);
-      border-top-right-radius: 0;
-    }
-    .message.agent .bubble {
-      background: var(--color-agent);
-      border-top-left-radius: 0;
-    }
-
-    .bubble strong {
-      display: block;
-      margin-bottom: 0.25rem;
-      color: var(--text-secondary);
-      font-weight: 500;
-    }
-
-    .loading {
-      text-align: center;
-      color: var(--text-secondary);
-      font-style: italic;
-      margin-top: 0.5rem;
-    }
-
-    .artifact {
-      background: #FEF9FF;
-      border-left: 4px solid var(--brand-purple);
-      padding: 1rem;
-      border-radius: var(--border-radius);
-      margin: 1rem 0;
-      box-shadow: var(--shadow);
-    }
-    .artifact h4 {
-      margin-bottom: 0.5rem;
-      color: var(--brand-purple);
-      font-weight: 500;
-    }
-    .artifact pre {
-      background: #FFFFFF;
-      padding: 0.5rem;
-      border-radius: 6px;
-      overflow-x: auto;
-    }
-    .artifact a {
-      color: var(--brand-purple);
-      text-decoration: none;
-      font-weight: 500;
-    }
-
-    form.input-group {
-      display: flex;
-      width: 100%;
-      margin-bottom: 2rem;
-    }
-    form input {
-      flex: 1;
-      padding: 0.75rem;
-      border: 1px solid #D1D5DB;
-      border-radius: var(--border-radius) 0 0 var(--border-radius);
-      font-size: 1rem;
-    }
-    form button {
-      background: var(--brand-purple);
-      color: #FFFFFF;
-      border: none;
-      padding: 0 1.5rem;
-      border-radius: 0 var(--border-radius) var(--border-radius) 0;
-      cursor: pointer;
-      font-size: 1rem;
-    }
-    form button:hover {
-      background: #4A006E;
-    }
-
-    .readme {
-      background: var(--bg-chat);
-      border-radius: var(--border-radius);
-      padding: 1.5rem;
-      box-shadow: var(--shadow);
-      font-size: 0.95rem;
-      line-height: 1.5;
-    }
-    .readme h2 {
-      color: var(--brand-purple);
-      margin-bottom: 0.5rem;
-      font-weight: 600;
-    }
-    .readme ul {
-      padding-left: 1.25rem;
-      margin-bottom: 1rem;
-    }
-    .readme ul li {
-      margin-bottom: 0.5rem;
-    }
-    .readme .credit {
-      margin-top: 1rem;
-      font-size: 0.85rem;
-      color: var(--text-secondary);
-      text-align: right;
-    }
+    .readme{background:var(--subtle);border-radius:var(--radius);padding:16px;box-shadow:var(--shadow);font-size:.95rem}
+    .readme h2{color:var(--brand-purple);margin:6px 0 8px}
+    .readme ul{padding-left:18px}
+    .readme .credit{text-align:right;color:var(--muted);margin-top:8px}
   </style>
 </head>
-
 <body ng-controller="ChatController">
   <div class="chat-container">
     <h1>A2A Demo Chat</h1>
+
+    <!-- HITL toolbar (shows only when awaiting input) -->
+    <div class="hitl-toolbar" ng-if="hitlPending">
+      <span class="hitl">HITL: agent requested more input</span>
+      <button ng-click="cancelHitl()">Cancel</button>
+    </div>
 
     <div class="chat-window" id="chatWindow">
       <!-- Completed messages -->
@@ -208,8 +96,32 @@
         <div class="bubble">
           <strong ng-if="msg.sender==='user'">You</strong>
           <strong ng-if="msg.sender==='assistant'">Assistant</strong>
-          <span ng-if="msg.sender==='user'">{{msg.content}}</span>
-          <span ng-if="msg.sender==='assistant'" ng-bind-html="msg.content"></span>
+
+          <span ng-if="msg.sender==='user'">{{msg.html}}</span>
+          <span ng-if="msg.sender==='assistant'" ng-bind-html="msg.html"></span>
+
+          <div class="meta-row" ng-if="msg.sender==='assistant' && (intentPathString(msg) || msg.hitl)">
+            <span class="intent" ng-if="intentPathString(msg)">Intent: {{intentPathString(msg)}}</span>
+            <span class="hitl" ng-if="msg.hitl">Input required</span>
+          </div>
+
+          <div class="citations" ng-if="hasCitations(msg)">
+            <details class="cites">
+              <summary>View Sources ({{msg.citations.length}})</summary>
+              <div class="cite-item" ng-repeat="c in msg.citations track by c.id">
+                <div class="cite-title">
+                  <a ng-if="c.url" href="{{c.url}}" target="_blank" rel="noopener">{{c.label || c.url}}</a>
+                  <span ng-if="!c.url">{{c.label}}</span>
+                </div>
+                <div class="cite-meta">
+                  <span ng-if="c.tool"><strong>Tool:</strong> {{c.tool}}</span>
+                  <span ng-if="c.kind"> • <strong>Type:</strong> {{c.kind}}</span>
+                  <span ng-if="c.intentPath && c.intentPath.length"> • <strong>Route:</strong> {{c.intentPath.join(' → ')}}</span>
+                  <span ng-if="c.note"> • {{c.note}}</span>
+                </div>
+              </div>
+            </details>
+          </div>
         </div>
       </div>
 
@@ -221,7 +133,7 @@
         </div>
       </div>
 
-      <!-- Artifact -->
+      <!-- Artifact (with optional citations) -->
       <div class="artifact" ng-if="artifact">
         <h4>Artifact</h4>
         <div ng-switch="artifact.type">
@@ -230,9 +142,24 @@
           <div ng-switch-when="binary">
             <a href="{{artifact.url}}" download="{{artifact.name}}">📎 Download {{artifact.name}}</a>
           </div>
-          <div ng-switch-when="chart">
-            <canvas id="chartCanvas" width="400" height="300"></canvas>
-          </div>
+          <div ng-switch-when="chart"><canvas id="chartCanvas" width="480" height="320"></canvas></div>
+        </div>
+        <div class="citations" ng-if="artifact.citations && artifact.citations.length">
+          <details class="cites">
+            <summary>View Sources ({{artifact.citations.length}})</summary>
+            <div class="cite-item" ng-repeat="c in artifact.citations track by c.id">
+              <div class="cite-title">
+                <a ng-if="c.url" href="{{c.url}}" target="_blank" rel="noopener">{{c.label || c.url}}</a>
+                <span ng-if="!c.url">{{c.label}}</span>
+              </div>
+              <div class="cite-meta">
+                <span ng-if="c.tool"><strong>Tool:</strong> {{c.tool}}</span>
+                <span ng-if="c.kind"> • <strong>Type:</strong> {{c.kind}}</span>
+                <span ng-if="c.intentPath && c.intentPath.length"> • <strong>Route:</strong> {{c.intentPath.join(' → ')}}</span>
+                <span ng-if="c.note"> • {{c.note}}</span>
+              </div>
+            </div>
+          </details>
         </div>
       </div>
 
@@ -240,36 +167,27 @@
     </div>
 
     <form ng-submit="sendMessage()" class="input-group">
-      <input type="text"
-             ng-model="userInput"
-             placeholder="Type a message…" required />
+      <input type="text" ng-model="userInput" placeholder="Type a message…" required />
       <button type="submit">Send</button>
     </form>
 
-    <!-- Project Readme -->
     <div class="readme">
       <h2>About This Demo</h2>
       <p>
-        This project showcases the Google “Agent2Agent” (A2A) framework integerated with Angular UI: a master Assistant
-        routes your queries to specialized agents (calculator, weather, GraphQL/data),
-        streams their replies and artifacts (charts, files, JSON), and renders them here.
+        A2A + Angular UI: Assistant delegates to tool agents (calculator, weather, GraphQL/data), streams replies & artifacts, and now shows
+        <strong>citations</strong> and <strong>intent routes</strong>. Also demonstrates <strong>HITL</strong> via A2A <code>input-required</code>.
       </p>
-      <h3>Available Agents</h3>
+      <h3>Try These</h3>
       <ul>
-        <li><strong>Assistant Agent</strong>: Dynamic intent classification + delegation & direct Query answering.</li>
-        <li><strong>Calculator Agent</strong>: Computes math expressions.</li>
-        <li><strong>Weather Agent</strong>: Fetches real-time weather by city.</li>
-        <li><strong>GraphQL Tool Agent</strong>: Queries compressor mock data, builds charts & exports CSV.</li>
+        <li><em>Math</em>: <code>What is 25 * 4 + 16?</code> → MDN citation</li>
+        <li><em>Weather</em>: <code>What is the weather in Laguna Beach?</code> → OpenWeather API citation</li>
+        <li><em>Data</em>:
+          <div><code>query { allSites { name location production } }</code></div>
+          <div><code>give me a chart for this</code> → dataset + skill citations</div>
+          <div><code>make this into a csv</code> → triggers HITL confirmation first</div>
+        </li>
       </ul>
-      <h3>Key Takeaways</h3>
-      <ul>
-        <li>Building a streamed AI UI with the A2A JS SDK.</li>
-        <li>Handling partial responses & rich artifacts (charts, downloads).</li>
-        <li>Clean, responsive design powered by AngularJS 1.x.</li>
-      </ul>
-      <div class="credit">
-        &mdash; Demo by Rish Sharma
-      </div>
+      <div class="credit">— Demo by Rish Sharma</div>
     </div>
   </div>
 </body>

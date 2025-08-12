@@ -1,4 +1,4 @@
-// graphql-agent.js
+// agents/graphql-agent.js
 import express from 'express';
 import cors from 'cors';
 import dotenv from 'dotenv';
@@ -11,10 +11,9 @@ import {
   InMemoryTaskStore
 } from '@a2a-js/sdk/server';
 
-// Load environment variables (Azure / OpenAI credentials, etc.)
 dotenv.config();
 
-// 1. Agent Card with expanded capabilities
+// === Agent card (unchanged from your working version) ===
 const graphQLAgentCard = {
   name: "GraphQL Tool Agent",
   description: "Executes data queries on a compressor dataset and can format results as JSON, charts, or files.",
@@ -54,7 +53,7 @@ const graphQLAgentCard = {
     {
       id: "data_analysis",
       name: "Data Analysis",
-      description: "Provides insights or summary of data using an LLM.",
+      description: "Provides insights or summary of site or compressor data using an LLM.",
       examples: ["Which site has the highest production?"],
       inputModes: ["text/plain"],
       outputModes: ["text/markdown", "text/plain"]
@@ -62,7 +61,7 @@ const graphQLAgentCard = {
   ]
 };
 
-// 2. GraphQL schema and mock dataset
+// === Mock schema/data (same as before) ===
 const schema = buildSchema(`
   type Site { name: String, location: String, production: Float }
   type Query { site(name: String!): Site, allSites: [Site] }
@@ -77,38 +76,30 @@ const root = {
   allSites: () => mockSites
 };
 
-// 3. Azure OpenAI (GPT-4) configuration for data analysis
+// === Azure OpenAI config (for analysis) ===
 const AZURE_ENDPOINT    = process.env.OPENAI_AZURE_ENDPOINT;
 const AZURE_KEY         = process.env.OPENAI_AZURE_KEY;
 const AZURE_DEPLOYMENT  = process.env.OPENAI_AZURE_DEPLOYMENT_NAME;
 const AZURE_API_VERSION = process.env.OPENAI_AZURE_API_VERSION;
-const AZURE_CHAT_URL    = AZURE_ENDPOINT 
+const AZURE_CHAT_URL    = AZURE_ENDPOINT
   ? `${AZURE_ENDPOINT}/openai/deployments/${AZURE_DEPLOYMENT}/chat/completions?api-version=${AZURE_API_VERSION}`
   : null;
 
-// 4. GraphQL Agent Executor with multi-turn memory
 class GraphQLAgentExecutor {
   constructor() {
     this.cancelled = new Set();
-    this.memory = {};  // Stores context-specific data for multi-turn interactions
+    this.memoryByContext = {}; // contextId -> { lastResultData }
+    this.awaiting = {};        // taskId -> { action, dataArray }
   }
-
-  cancelTask(taskId) {
-    this.cancelled.add(taskId);
-    return Promise.resolve();
-  }
+  cancelTask(taskId) { this.cancelled.add(taskId); return Promise.resolve(); }
 
   async execute(context, eventBus) {
     const { userMessage, taskId, contextId, task } = context;
     const isNew = !task;
-    const userText = (userMessage.parts[0]?.text || "").trim();
+    const userText = (userMessage.parts?.[0]?.text || "").trim();
 
-    // Initialize memory for this context if not already present
-    if (!this.memory[contextId]) {
-      this.memory[contextId] = {};
-    }
+    if (!this.memoryByContext[contextId]) this.memoryByContext[contextId] = {};
 
-    // (a) Publish initial task event on new tasks
     if (isNew) {
       eventBus.publish({
         kind: "task",
@@ -121,269 +112,272 @@ class GraphQLAgentExecutor {
       });
     }
 
-    // (b) Send a "working" status update
+    // Continuation for HITL confirmation?
+    if (this.awaiting[taskId]) {
+      const decision = userText.toLowerCase();
+      if (/(^y(es)?$)|(^ok$)|approve|proceed/.test(decision)) {
+        await this._exportCsv(taskId, contextId, eventBus, this.awaiting[taskId].dataArray, /*attachCites*/true);
+        delete this.awaiting[taskId];
+        eventBus.finished(); return;
+      } else if (/(^n(o)?$)|cancel|stop/.test(decision)) {
+        delete this.awaiting[taskId];
+        eventBus.publish({
+          kind: "status-update", final: true, taskId, contextId,
+          status: {
+            state: "completed",
+            message: {
+              kind: "message", role: "agent", messageId: uuidv4(), taskId, contextId,
+              parts: [{ kind: "text", text: "CSV export cancelled." }],
+              intent: "data_file_export",
+              citations: [{
+                id: uuidv4(), label: "Skill: data_file_export", kind: "internal",
+                tool: "GraphQL Tool Agent", note: "User declined export", timestamp: new Date().toISOString()
+              }]
+            }
+          }
+        });
+        eventBus.finished(); return;
+      }
+
+      // Ask again clearly
+      eventBus.publish({
+        kind: "status-update", final: false, taskId, contextId,
+        status: {
+          state: "input-required",
+          message: {
+            kind: "message", role: "agent", messageId: uuidv4(), taskId, contextId,
+            parts: [{ kind: "text", text: "Please reply 'yes' or 'no' to confirm the CSV export." }],
+            intent: "data_file_export",
+            citations: [{
+              id: uuidv4(), label: "HITL confirmation", kind: "internal",
+              tool: "GraphQL Tool Agent", note: "Disambiguation on export", timestamp: new Date().toISOString()
+            }]
+          }
+        }
+      });
+      return;
+    }
+
+    // Working
     eventBus.publish({
-      kind: "status-update",
-      taskId, contextId,
+      kind: "status-update", final: false, taskId, contextId,
       status: {
-        state: "working",
-        message: {
-          kind: "message",
-          role: "agent",
-          messageId: uuidv4(),
-          taskId, contextId,
-          parts: [{ kind: "text", text: "_Processing your request..._" }]
-        },
-        timestamp: new Date().toISOString()
-      },
-      final: false
+        state: "working", timestamp: new Date().toISOString(),
+        message: { kind: "message", role: "agent", messageId: uuidv4(), taskId, contextId,
+          // NOTE: we keep an empty parts array to avoid duplicating 'working' text in UI bubbles
+          parts: [],
+          intent: "data_analysis"
+        }
+      }
     });
 
-    // (c) Determine user intent (query vs chart vs file vs analysis)
-    let intent = "analysis";  // default to analysis for natural language questions
+    // Intent
     const lower = userText.toLowerCase();
-    if (lower.startsWith("query") || userText.startsWith("{")) {
-      intent = "graphql";
-    } else if (lower.includes("chart") || lower.includes("graph")) {
-      intent = "chart";
-    } else if (lower.includes("csv") || lower.includes("file") || lower.includes("download")) {
-      intent = "file";
-    } else if (/(alpha|beta|gamma)/i.test(userText)) {
-      // If user input references a known site name without a full query
-      intent = "site";
-    }
-    // (Note: 'analysis' will cover any other questions about the data.)
+    let intent = "data_analysis";
+    if (lower.startsWith("query") || userText.trim().startsWith("{")) intent = "compressor_data_query";
+    else if (lower.includes("chart") || lower.includes("graph")) intent = "chart_output";
+    else if (lower.includes("csv") || lower.includes("file") || lower.includes("download")) intent = "data_file_export";
+    else if (/(alpha|beta|gamma)/i.test(userText)) intent = "compressor_data_query";
 
-    let finalTextOutput = "";  // will hold any text response to send back in the final message
     try {
-      if (intent === "graphql") {
-        // **GraphQL Query Execution**
-        const resultObj = await graphql({ schema, source: userText, rootValue: root });
-        // Save result in memory for follow-ups
-        if (resultObj.data) {
-          this.memory[contextId].lastResultData = resultObj.data.allSites ?? resultObj.data.site ?? resultObj.data;
-        }
-        const outputJson = JSON.stringify(resultObj, null, 2);
-        // Send JSON result as a downloadable artifact
+      if (intent === "compressor_data_query") {
+        const source = userText.startsWith("{") ? userText : `query { allSites { name location production } }`;
+        const result = await graphql({ schema, source, rootValue: root });
+        if (result?.data) this.memoryByContext[contextId].lastResultData = result.data.allSites ?? result.data.site ?? result.data;
+
+        const outputJson = JSON.stringify(result, null, 2);
+
         eventBus.publish({
-          kind: "artifact-update",
-          taskId, contextId,
+          kind: "artifact-update", taskId, contextId, append: false, lastChunk: true,
           artifact: {
             artifactId: "result-json",
             name: "result.json",
             mimeType: "application/json",
-            parts: [{ kind: "text", text: outputJson }]
-          },
-          append: false,
-          lastChunk: true
-        });
-        // Also include JSON text in final message so it's visible in chat
-        finalTextOutput = outputJson;
-      }
-      else if (intent === "site") {
-        // **Single Site Query (inferred from name)**
-        // Construct a GraphQL query for the specified site name
-        const nameMatch = userText.match(/Alpha|Beta|Gamma/i);
-        const siteName = nameMatch ? nameMatch[0] : "";
-        const query = `query { site(name: "${siteName}") { name location production } }`;
-        const resultObj = await graphql({ schema, source: query, rootValue: root });
-        if (resultObj.data) {
-          this.memory[contextId].lastResultData = resultObj.data.site;
-        }
-        const outputJson = JSON.stringify(resultObj, null, 2);
-        // We choose to just return the JSON in the message (small result), but could also send an artifact
-        finalTextOutput = outputJson;
-      }
-      else if (intent === "chart") {
-        // **Chart Generation**
-        // Use last result data if available; otherwise fall back to full dataset
-        let dataArray;
-        if (this.memory[contextId].lastResultData) {
-          dataArray = Array.isArray(this.memory[contextId].lastResultData)
-            ? this.memory[contextId].lastResultData 
-            : [ this.memory[contextId].lastResultData ];
-        } else {
-          dataArray = mockSites;
-        }
-        // Prepare chart data series
-        let labels = [], values = [];
-        if (lower.includes("location")) {
-          // User wants data aggregated by location (country)
-          const totals = {};
-          dataArray.forEach(site => {
-            if (!site) return;
-            const loc = site.location || "Unknown";
-            const prod = site.production || 0;
-            totals[loc] = (totals[loc] || 0) + prod;
-          });
-          labels = Object.keys(totals);
-          values = Object.values(totals);
-        } else {
-          // One bar per site
-          labels = dataArray.map(site => site.name);
-          values = dataArray.map(site => site.production);
-        }
-        // Create a Chart.js configuration object
-        const chartConfig = {
-          type: "bar",
-          data: {
-            labels: labels,
-            datasets: [{ label: "Production", data: values }]
-          },
-          options: {
-            responsive: true,
-            title: { display: true, text: "Production Chart" }
+            parts: [{ kind: "text", text: outputJson }],
+            citations: [
+              { id: uuidv4(), label: "Dataset: mockSites", kind: "internal", tool: "GraphQL Tool Agent", note: "In-memory mock data", timestamp: new Date().toISOString() },
+              { id: uuidv4(), label: "Skill: compressor_data_query", kind: "internal", tool: "GraphQL Tool Agent", note: "Executed GraphQL query", timestamp: new Date().toISOString() }
+            ]
           }
-        };
-        // Wrap in a JSON marker so the UI knows this is chart data
-        const chartData = { type: "chartjs", chart: chartConfig };
-        const chartJson = JSON.stringify(chartData, null, 2);
-        // Send chart spec as a DataPart artifact (JSON)
+        });
+
         eventBus.publish({
-          kind: "artifact-update",
-          taskId, contextId,
+          kind: "status-update", final: true, taskId, contextId,
+          status: {
+            state: "completed",
+            message: {
+              kind: "message", role: "agent", messageId: uuidv4(), taskId, contextId,
+              parts: [{ kind: "text", text: outputJson }],
+              intent: "compressor_data_query",
+              citations: [
+                { id: uuidv4(), label: "GraphQL spec (query language)", url: "https://spec.graphql.org/", kind: "doc", tool: "GraphQL Tool Agent", note: "Query evaluation", timestamp: new Date().toISOString() }
+              ]
+            }
+          }
+        });
+        eventBus.finished(); return;
+      }
+
+      if (intent === "chart_output") {
+        const data = this.memoryByContext[contextId].lastResultData || mockSites;
+        const labels = data.map(s => s.name);
+        const values = data.map(s => s.production);
+        const chart = {
+          type: "bar",
+          data: { labels, datasets: [{ label: "Production", data: values }] },
+          options: { responsive: true, plugins: { title: { display: true, text: "Production Chart" } } }
+        };
+        const chartJson = JSON.stringify({ type: "chartjs", chart }, null, 2);
+
+        eventBus.publish({
+          kind: "artifact-update", taskId, contextId, append: false, lastChunk: true,
           artifact: {
             artifactId: "chart-data",
             name: "chart.json",
             mimeType: "application/json",
-            parts: [{ kind: "text", text: chartJson }]
-          },
-          append: false,
-          lastChunk: true
+            parts: [{ kind: "text", text: chartJson }],
+            citations: [
+              { id: uuidv4(), label: "Dataset: mockSites", kind: "internal", tool: "GraphQL Tool Agent", note: "Chart built from mock data", timestamp: new Date().toISOString() },
+              { id: uuidv4(), label: "Skill: chart_output", kind: "internal", tool: "GraphQL Tool Agent", note: "Chart generation skill used", timestamp: new Date().toISOString() }
+            ]
+          }
         });
-        // Provide a brief confirmation in text
-        finalTextOutput = "Chart generated from the data.";
-      }
-      else if (intent === "file") {
-        // **File Export (CSV)**
-        let dataArray;
-        if (this.memory[contextId].lastResultData) {
-          dataArray = Array.isArray(this.memory[contextId].lastResultData)
-            ? this.memory[contextId].lastResultData
-            : [ this.memory[contextId].lastResultData ];
-        } else {
-          dataArray = mockSites;
-        }
-        if (!dataArray.length) {
-          throw new Error("No data available to export.");
-        }
-        // Convert data to CSV format (commas, with header row)
-        const headers = Object.keys(dataArray[0]);
-        const csvRows = [ headers.join(',') ];
-        for (const item of dataArray) {
-          const values = headers.map(h => {
-            let val = item[h];
-            // Convert undefined/null to empty, and replace any commas in values to avoid breaking CSV format
-            return (val === undefined || val === null) ? "" : val.toString().replace(/,/g, ';');
-          });
-          csvRows.push(values.join(','));
-        }
-        const csvContent = csvRows.join('\n');
-        // Encode CSV text to base64 for sending as FilePart
-        const csvBase64 = Buffer.from(csvContent, 'utf-8').toString('base64');
-        eventBus.publish({
-          kind: "artifact-update",
-          taskId, contextId,
-          artifact: {
-            artifactId: "data-csv",
-            name: "data.csv",
-            mimeType: "text/csv",
-            parts: [{ base64: csvBase64 }]
-          },
-          append: false,
-          lastChunk: true
-        });
-        finalTextOutput = "Exported data to CSV file.";
-      }
-      else if (intent === "analysis") {
-        // **Data Analysis via LLM**
-        let dataForAnalysis;
-        if (this.memory[contextId].lastResultData) {
-          dataForAnalysis = this.memory[contextId].lastResultData;
-        } else {
-          dataForAnalysis = mockSites;
-        }
-        const question = userText;
-        const dataSnippet = JSON.stringify(dataForAnalysis);
-        // Construct a prompt giving the data and the question to the AI
-        const messages = [
-          { role: "system", content: "You are a data analyst assistant. Answer the user's question based on the provided data." },
-          { role: "user", content: `Data: ${dataSnippet}\nQuestion: ${question}` }
-        ];
-        if (!AZURE_CHAT_URL || !AZURE_KEY) {
-          throw new Error("LLM analysis requested but Azure OpenAI is not configured.");
-        }
-        const payload = { messages, max_tokens: 200, temperature: 0.7 };
-        const apiRes = await fetch(AZURE_CHAT_URL, {
-          method: "POST",
-          headers: { "Content-Type": "application/json", "api-key": AZURE_KEY },
-          body: JSON.stringify(payload)
-        });
-        if (!apiRes.ok) {
-          const errText = await apiRes.text();
-          throw new Error(`Azure OpenAI error ${apiRes.status}: ${errText}`);
-        }
-        const apiJson = await apiRes.json();
-        const answerText = apiJson.choices[0].message.content;
-        finalTextOutput = answerText;
-      }
-    } catch (err) {
-      console.error("GraphQLAgent error:", err);
-      finalTextOutput = `**Error:** ${err.message}`;
-    }
 
-    // (d) If task was cancelled mid-way, handle that
-    if (this.cancelled.has(taskId)) {
+        eventBus.publish({
+          kind: "status-update", final: true, taskId, contextId,
+          status: {
+            state: "completed",
+            message: {
+              kind: "message", role: "agent", messageId: uuidv4(), taskId, contextId,
+              parts: [{ kind: "text", text: "Chart generated from the data." }],
+              intent: "chart_output",
+              citations: [
+                { id: uuidv4(), label: "Chart.js docs", url: "https://www.chartjs.org/docs/latest/", kind: "doc", tool: "GraphQL Tool Agent", note: "Chart configuration", timestamp: new Date().toISOString() }
+              ]
+            }
+          }
+        });
+        eventBus.finished(); return;
+      }
+
+      if (intent === "data_file_export") {
+        const data = this.memoryByContext[contextId].lastResultData || mockSites;
+        const rows = Array.isArray(data) ? data.length : (data ? 1 : 0);
+
+        // HITL confirmation
+        this.awaiting[taskId] = { action: "exportCsv", dataArray: Array.isArray(data) ? data : [data] };
+        eventBus.publish({
+          kind: "status-update", final: false, taskId, contextId,
+          status: {
+            state: "input-required",
+            message: {
+              kind: "message", role: "agent", messageId: uuidv4(), taskId, contextId,
+              parts: [{ kind: "text", text: `About to export ${rows} row(s) to CSV. Proceed? (yes/no)` }],
+              intent: "data_file_export",
+              citations: [
+                { id: uuidv4(), label: "Skill: data_file_export", kind: "internal", tool: "GraphQL Tool Agent", note: "Export requires confirmation", timestamp: new Date().toISOString() }
+              ]
+            }
+          }
+        });
+        return;
+      }
+
+      // data_analysis (LLM)
+      const data = this.memoryByContext[contextId].lastResultData || mockSites;
+      if (!AZURE_CHAT_URL || !AZURE_KEY) throw new Error("LLM not configured.");
+      const payload = {
+        messages: [
+          { role: "system", content: "Answer based strictly on the provided data." },
+          { role: "user", content: `Data: ${JSON.stringify(data)}\nQuestion: ${userText}` }
+        ],
+        max_tokens: 200, temperature: 0.4
+      };
+      const r = await fetch(AZURE_CHAT_URL, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "api-key": AZURE_KEY },
+        body: JSON.stringify(payload)
+      });
+      if (!r.ok) throw new Error(`Azure OpenAI ${r.status}: ${await r.text()}`);
+      const j = await r.json();
+      const txt = j.choices?.[0]?.message?.content || "No answer.";
+
       eventBus.publish({
-        kind: "status-update",
-        taskId, contextId,
+        kind: "status-update", final: true, taskId, contextId,
         status: {
-          state: "cancelled",
+          state: "completed",
           message: {
-            kind: "message",
-            role: "agent",
-            messageId: uuidv4(),
-            taskId, contextId,
-            parts: [{ kind: "text", text: "_(cancelled)_"}]
-          },
-          timestamp: new Date().toISOString()
-        },
-        final: true
+            kind: "message", role: "agent", messageId: uuidv4(), taskId, contextId,
+            parts: [{ kind: "text", text: txt }],
+            intent: "data_analysis",
+            citations: [
+              { id: uuidv4(), label: "Dataset: mockSites", kind: "internal", tool: "GraphQL Tool Agent", note: "Source data for analysis", timestamp: new Date().toISOString() },
+              { id: uuidv4(), label: "LLM (Azure OpenAI)", kind: "model", tool: "GraphQL Tool Agent", note: `${AZURE_DEPLOYMENT} completion`, timestamp: new Date().toISOString() }
+            ]
+          }
+        }
+      });
+      eventBus.finished(); return;
+
+    } catch (e) {
+      eventBus.publish({
+        kind: "status-update", final: true, taskId, contextId,
+        status: {
+          state: "completed",
+          message: {
+            kind: "message", role: "agent", messageId: uuidv4(), taskId, contextId,
+            parts: [{ kind: "text", text: `**Error:** ${e.message}` }],
+            intent
+          }
+        }
       });
       eventBus.finished();
-      return;
     }
+  }
 
-    // (e) Send final completion status with any text output
+  async _exportCsv(taskId, contextId, eventBus, dataArray, attachCites) {
+    const headers = Object.keys(dataArray[0] || {});
+    const csvRows = [headers.join(',')];
+    for (const item of dataArray) {
+      csvRows.push(headers.map(h => {
+        const v = item?.[h];
+        return (v === undefined || v === null) ? "" : String(v).replace(/,/g, ';');
+      }).join(','));
+    }
+    const csvBase64 = Buffer.from(csvRows.join('\n'), 'utf-8').toString('base64');
+
     eventBus.publish({
-      kind: "status-update",
-      taskId, contextId,
+      kind: "artifact-update", taskId, contextId, append: false, lastChunk: true,
+      artifact: {
+        artifactId: "data-csv", name: "data.csv", mimeType: "text/csv",
+        parts: [{ base64: csvBase64 }],
+        citations: attachCites ? [
+          { id: uuidv4(), label: "Dataset: mockSites", kind: "internal", tool: "GraphQL Tool Agent", note: "CSV rows from mock data", timestamp: new Date().toISOString() },
+          { id: uuidv4(), label: "Skill: data_file_export", kind: "internal", tool: "GraphQL Tool Agent", note: "CSV written server-side", timestamp: new Date().toISOString() }
+        ] : undefined
+      }
+    });
+
+    eventBus.publish({
+      kind: "status-update", final: true, taskId, contextId,
       status: {
         state: "completed",
         message: {
-          kind: "message",
-          role: "agent",
-          messageId: uuidv4(),
-          taskId, contextId,
-          parts: finalTextOutput 
-            ? [{ kind: "text", text: finalTextOutput }]
-            : []
-        },
-        timestamp: new Date().toISOString()
-      },
-      final: true
+          kind: "message", role: "agent", messageId: uuidv4(), taskId, contextId,
+          parts: [{ kind: "text", text: "Exported data to CSV file." }],
+          intent: "data_file_export",
+          citations: attachCites ? [
+            { id: uuidv4(), label: "Skill: data_file_export", kind: "internal", tool: "GraphQL Tool Agent", note: "Export confirmed by user", timestamp: new Date().toISOString() }
+          ] : undefined
+        }
+      }
     });
-    eventBus.finished();
   }
 }
 
-// 5. Start Express server with A2A routes
 const exec = new GraphQLAgentExecutor();
 const handler = new DefaultRequestHandler(graphQLAgentCard, new InMemoryTaskStore(), exec);
 const app = express();
 app.use(cors());
 new A2AExpressApp(handler).setupRoutes(app, "");
-
-app.listen(41234, () => {
-  console.log("GraphQL Tool Agent listening on http://localhost:41234/");
-});
+app.listen(41234, () => console.log("GraphQL Tool Agent listening on http://localhost:41234/"));
