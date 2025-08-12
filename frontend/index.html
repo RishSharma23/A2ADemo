@@ -171,23 +171,44 @@
       <button type="submit">Send</button>
     </form>
 
-    <div class="readme">
+    
+        <div class="readme">
       <h2>About This Demo</h2>
       <p>
-        A2A + Angular UI: Assistant delegates to tool agents (calculator, weather, GraphQL/data), streams replies & artifacts, and now shows
-        <strong>citations</strong> and <strong>intent routes</strong>. Also demonstrates <strong>HITL</strong> via A2A <code>input-required</code>.
+        This project showcases the Google “Agent2Agent” (A2A) framework integerated with Angular UI: a master Assistant
+        routes your queries to specialized agents (calculator, weather, GraphQL/data),
+        streams their replies and artifacts (charts, files, JSON), and renders them here.
+        <strong>Update: </strong>
+        Shows <strong>citations</strong> and <strong>intent routes</strong>. Also demonstrates <strong>HITL</strong> via A2A <code>input-required</code>.
       </p>
+      <h3>Available Agents</h3>
+      <ul>
+        <li><strong>Assistant Agent</strong>: Dynamic intent classification + delegation & direct Query answering.</li>
+        <li><strong>Calculator Agent</strong>: Computes math expressions.</li>
+        <li><strong>Weather Agent</strong>: Fetches real-time weather by city.</li>
+        <li><strong>GraphQL Tool Agent</strong>: Queries compressor mock data, builds charts & exports CSV.</li>
+      </ul>
+      <h3>Key Takeaways</h3>
+      <ul>
+        <li>Building a streamed AI UI with the A2A JS SDK.</li>
+        <li>Handling partial responses & rich artifacts (charts, downloads).</li>
+        <li>Citations and Human in the Loop responses</li>
+        <li>Clean, responsive design powered by AngularJS</li>
+      </ul>
       <h3>Try These</h3>
       <ul>
         <li><em>Math</em>: <code>What is 25 * 4 + 16?</code> → MDN citation</li>
         <li><em>Weather</em>: <code>What is the weather in Laguna Beach?</code> → OpenWeather API citation</li>
         <li><em>Data</em>:
           <div><code>query { allSites { name location production } }</code></div>
+          <div><code>What is the site with the highest production?</code></div>
           <div><code>give me a chart for this</code> → dataset + skill citations</div>
           <div><code>make this into a csv</code> → triggers HITL confirmation first</div>
         </li>
       </ul>
-      <div class="credit">— Demo by Rish Sharma</div>
+      <div class="credit">
+        &mdash; Demo by Rish Sharma
+      </div>
     </div>
   </div>
 </body>

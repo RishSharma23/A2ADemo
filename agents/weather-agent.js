@@ -37,7 +37,7 @@ class Exec {
       kind:"status-update", final:false, taskId, contextId,
       status:{ state:"working",
         message:{ kind:"message", role:"agent", messageId:uuidv4(), taskId, contextId,
-          parts:[{kind:"text", text:"Checking weather data..."}], intent:"" } }
+          parts:[], intent:"weather_info" } }
     });
    /* eventBus.publish({
   kind:"status-update", final:false, taskId, contextId,
