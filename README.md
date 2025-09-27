@@ -10,7 +10,7 @@ A production-style proof-of-concept that demonstrates how a browser UI can talk 
 
 * [Why this POC](#why-this-poc)
 * [What’s included](#whats-included)
-* [Architecture (placeholders for your visuals)](#architecture-placeholders-for-your-visuals)
+* [Architecture](#architecture)
 * [Repository layout](#repository-layout)
 * [Getting started](#getting-started)
 * [How it works](#how-it-works)
